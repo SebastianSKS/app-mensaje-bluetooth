@@ -1,121 +1,201 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 
 void main() {
-  runApp(const MyApp());
+  runApp(const ChatLanApp());
 }
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+class ChatLanApp extends StatelessWidget {
+  const ChatLanApp({super.key});
 
-  // This widget is the root of your application.
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Flutter Demo',
-      theme: ThemeData(
-        // This is the theme of your application.
-        //
-        // TRY THIS: Try running your application with "flutter run". You'll see
-        // the application has a purple toolbar. Then, without quitting the app,
-        // try changing the seedColor in the colorScheme below to Colors.green
-        // and then invoke "hot reload" (save your changes or press the "hot
-        // reload" button in a Flutter-supported IDE, or press "r" if you used
-        // the command line to start the app).
-        //
-        // Notice that the counter didn't reset back to zero; the application
-        // state is not lost during the reload. To reset the state, use hot
-        // restart instead.
-        //
-        // This works for code too, not just values: Most code changes can be
-        // tested with just a hot reload.
-        colorScheme: .fromSeed(seedColor: Colors.deepPurple),
-      ),
-      home: const MyHomePage(title: 'Flutter Demo Home Page'),
+      debugShowCheckedModeBanner: false,
+      title: 'Chat LAN',
+      theme: ThemeData(primarySwatch: Colors.blue),
+      home: const PantallaInicio(),
     );
   }
 }
 
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key, required this.title});
-
-  // This widget is the home page of your application. It is stateful, meaning
-  // that it has a State object (defined below) that contains fields that affect
-  // how it looks.
-
-  // This class is the configuration for the state. It holds the values (in this
-  // case the title) provided by the parent (in this case the App widget) and
-  // used by the build method of the State. Fields in a Widget subclass are
-  // always marked "final".
-
-  final String title;
-
-  @override
-  State<MyHomePage> createState() => _MyHomePageState();
-}
-
-class _MyHomePageState extends State<MyHomePage> {
-  int _counter = 0;
-
-  void _incrementCounter() {
-    setState(() {
-      // This call to setState tells the Flutter framework that something has
-      // changed in this State, which causes it to rerun the build method below
-      // so that the display can reflect the updated values. If we changed
-      // _counter without calling setState(), then the build method would not be
-      // called again, and so nothing would appear to happen.
-      _counter++;
-    });
-  }
+class PantallaInicio extends StatelessWidget {
+  const PantallaInicio({super.key});
 
   @override
   Widget build(BuildContext context) {
-    // This method is rerun every time setState is called, for instance as done
-    // by the _incrementCounter method above.
-    //
-    // The Flutter framework has been optimized to make rerunning build methods
-    // fast, so that you can just rebuild anything that needs updating rather
-    // than having to individually change instances of widgets.
     return Scaffold(
-      appBar: AppBar(
-        // TRY THIS: Try changing the color here to a specific color (to
-        // Colors.amber, perhaps?) and trigger a hot reload to see the AppBar
-        // change color while the other colors stay the same.
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        // Here we take the value from the MyHomePage object that was created by
-        // the App.build method, and use it to set our appbar title.
-        title: Text(widget.title),
-      ),
+      appBar: AppBar(title: const Text('Chat Secreto LAN'), centerTitle: true),
       body: Center(
-        // Center is a layout widget. It takes a single child and positions it
-        // in the middle of the parent.
         child: Column(
-          // Column is also a layout widget. It takes a list of children and
-          // arranges them vertically. By default, it sizes itself to fit its
-          // children horizontally, and tries to be as tall as its parent.
-          //
-          // Column has various properties to control how it sizes itself and
-          // how it positions its children. Here we use mainAxisAlignment to
-          // center the children vertically; the main axis here is the vertical
-          // axis because Columns are vertical (the cross axis would be
-          // horizontal).
-          //
-          // TRY THIS: Invoke "debug painting" (choose the "Toggle Debug Paint"
-          // action in the IDE, or press "p" in the console), to see the
-          // wireframe for each widget.
-          mainAxisAlignment: .center,
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Text('You have pushed the button this many times:'),
-            Text(
-              '$_counter',
-              style: Theme.of(context).textTheme.headlineMedium,
+            ElevatedButton.icon(
+              onPressed: () {
+                // Navegamos a la pantalla del Host
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const PantallaHost()),
+                );
+              },
+              icon: const Icon(Icons.wifi_tethering),
+              label: const Padding(
+                padding: EdgeInsets.all(12.0),
+                child: Text(
+                  'Crear Sala (Ser Host)',
+                  style: TextStyle(fontSize: 18),
+                ),
+              ),
+            ),
+            const SizedBox(height: 30),
+            ElevatedButton.icon(
+              onPressed: () {
+                // Todavía no hacemos esta pantalla, por ahora solo imprime en consola
+                print("Próximamente: Pantalla para unirse");
+              },
+              icon: const Icon(Icons.login),
+              label: const Padding(
+                padding: EdgeInsets.all(12.0),
+                child: Text(
+                  'Unirse a Sala (Cliente)',
+                  style: TextStyle(fontSize: 18),
+                ),
+              ),
             ),
           ],
         ),
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: const Icon(Icons.add),
+    );
+  }
+}
+
+// ==========================================
+// PANTALLA DEL HOST (EL SERVIDOR LOCAL)
+// ==========================================
+
+class PantallaHost extends StatefulWidget {
+  const PantallaHost({super.key});
+
+  @override
+  State<PantallaHost> createState() => _PantallaHostState();
+}
+
+class _PantallaHostState extends State<PantallaHost> {
+  ServerSocket? _serverSocket;
+  String _ipLocal = "Buscando IP...";
+  List<String> _mensajes = [];
+  List<Socket> _clientesConectados = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _iniciarServidor();
+  }
+
+  Future<void> _iniciarServidor() async {
+    try {
+      // 1. Buscar la IP local del dispositivo
+      for (var interface in await NetworkInterface.list()) {
+        for (var addr in interface.addresses) {
+          if (addr.type == InternetAddressType.IPv4 && !addr.isLoopback) {
+            setState(() {
+              _ipLocal = addr.address;
+            });
+            break;
+          }
+        }
+      }
+
+      // 2. Levantar el servidor en el puerto 8080
+      _serverSocket = await ServerSocket.bind(InternetAddress.anyIPv4, 8080);
+
+      // 3. Quedarse escuchando a ver si alguien se conecta
+      _serverSocket!.listen((Socket cliente) {
+        setState(() {
+          _clientesConectados.add(cliente);
+          _mensajes.add("¡Alguien se ha conectado!");
+        });
+
+        // 4. Escuchar los mensajes que manda ese cliente
+        cliente.listen(
+          (List<int> data) {
+            String mensajeRecibido = String.fromCharCodes(data);
+            setState(() {
+              _mensajes.add("Amigo: $mensajeRecibido");
+            });
+
+            // Retransmitir el mensaje a los demás conectados
+            for (var c in _clientesConectados) {
+              if (c != cliente) {
+                c.write(mensajeRecibido);
+              }
+            }
+          },
+          onDone: () {
+            setState(() {
+              _clientesConectados.remove(cliente);
+              _mensajes.add("Alguien se desconectó.");
+            });
+          },
+        );
+      });
+    } catch (e) {
+      setState(() {
+        _ipLocal = "Error al iniciar servidor";
+        _mensajes.add(e.toString());
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _serverSocket?.close();
+    for (var cliente in _clientesConectados) {
+      cliente.close();
+    }
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Sala del Host'),
+        backgroundColor: Colors.green,
+      ),
+      body: Column(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(16),
+            color: Colors.green.shade100,
+            width: double.infinity,
+            child: Column(
+              children: [
+                const Text(
+                  'Pide a tus amigos que se conecten a esta IP:',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  _ipLocal,
+                  style: const TextStyle(fontSize: 32, color: Colors.green),
+                ),
+                const Text('Puerto: 8080', style: TextStyle(fontSize: 16)),
+              ],
+            ),
+          ),
+          Expanded(
+            child: ListView.builder(
+              itemCount: _mensajes.length,
+              itemBuilder: (context, index) {
+                return ListTile(
+                  title: Text(_mensajes[index]),
+                  leading: const Icon(Icons.message, color: Colors.green),
+                );
+              },
+            ),
+          ),
+        ],
       ),
     );
   }
