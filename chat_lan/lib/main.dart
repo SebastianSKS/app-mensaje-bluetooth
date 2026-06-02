@@ -16,6 +16,22 @@ const Color burbujaMia = Color(0xFF005C4B);
 const Color burbujaOtro = Color(0xFF202C33);
 const Color colorAcento = Color(0xFF00A884);
 
+// Generador de colores únicos para los nombres de usuario
+Color _getColorPorNombre(String nombre) {
+  const colores = [
+    Color(0xFFEF9A9A),
+    Color(0xFFCE93D8),
+    Color(0xFF90CAF9),
+    Color(0xFF80CBC4),
+    Color(0xFFA5D6A7),
+    Color(0xFFFFCC80),
+    Color(0xFFFFAB91),
+    Color(0xFF81D4FA),
+    Color(0xFFB39DDB),
+  ];
+  return colores[nombre.hashCode.abs() % colores.length];
+}
+
 class ChatLanApp extends StatelessWidget {
   const ChatLanApp({super.key});
 
@@ -54,15 +70,17 @@ class ChatLanApp extends StatelessWidget {
 }
 
 // ==========================================
-// ESTRUCTURA DEL MENSAJE
+// ESTRUCTURA DEL MENSAJE (MEJORADA)
 // ==========================================
 class MensajeChat {
+  final String nombre; // Nuevo campo para el color
   final String texto;
   final bool soyYo;
   final bool esSistema;
   final String hora;
 
   MensajeChat({
+    this.nombre = "",
     required this.texto,
     required this.soyYo,
     required this.esSistema,
@@ -70,6 +88,7 @@ class MensajeChat {
   });
 
   Map<String, dynamic> toJson() => {
+    'nombre': nombre,
     'texto': texto,
     'soyYo': soyYo,
     'esSistema': esSistema,
@@ -77,10 +96,11 @@ class MensajeChat {
   };
 
   factory MensajeChat.fromJson(Map<String, dynamic> json) => MensajeChat(
-    texto: json['texto'],
-    soyYo: json['soyYo'],
-    esSistema: json['esSistema'],
-    hora: json['hora'],
+    nombre: json['nombre'] ?? "",
+    texto: json['texto'] ?? "",
+    soyYo: json['soyYo'] ?? false,
+    esSistema: json['esSistema'] ?? false,
+    hora: json['hora'] ?? "",
   );
 }
 
@@ -180,9 +200,8 @@ class _PantallaHostState extends State<PantallaHost> {
   List<MensajeChat> _mensajes = [];
 
   final TextEditingController _mensajeController = TextEditingController();
-  final TextEditingController _nombreController = TextEditingController(
-    text: "Host",
-  );
+  final TextEditingController _nombreController =
+      TextEditingController(); // Ya no dice Fidel quemado
   final ScrollController _scrollController = ScrollController();
 
   String _quienEscribe = "";
@@ -191,12 +210,16 @@ class _PantallaHostState extends State<PantallaHost> {
   @override
   void initState() {
     super.initState();
-    _cargarHistorial();
+    _cargarDatos();
     _iniciarServidor();
   }
 
-  Future<void> _cargarHistorial() async {
+  Future<void> _cargarDatos() async {
     final prefs = await SharedPreferences.getInstance();
+    // Cargar nombre guardado
+    _nombreController.text = prefs.getString('mi_nombre_host') ?? "Host";
+
+    // Cargar historial
     final String? historialJson = prefs.getString('historial_host');
     if (historialJson != null) {
       final List<dynamic> decodificado = jsonDecode(historialJson);
@@ -211,6 +234,7 @@ class _PantallaHostState extends State<PantallaHost> {
 
   Future<void> _guardarHistorial() async {
     final prefs = await SharedPreferences.getInstance();
+    prefs.setString('mi_nombre_host', _nombreController.text);
     final String historialJson = jsonEncode(
       _mensajes.map((m) => m.toJson()).toList(),
     );
@@ -277,35 +301,39 @@ class _PantallaHostState extends State<PantallaHost> {
         cliente.listen(
           (List<int> data) {
             if (!mounted) return;
-            String mensajeRecibido = String.fromCharCodes(data);
+            String stringData = String.fromCharCodes(data);
 
-            if (mensajeRecibido.startsWith("CMD::TYPING::")) {
-              String nombreAmigo = mensajeRecibido.replaceAll(
-                "CMD::TYPING::",
-                "",
-              );
-              _mostrarEscribiendo(nombreAmigo);
-              for (var c in _clientesConectados) {
-                if (c != cliente) c.write(mensajeRecibido);
+            // Separar comandos en caso de que lleguen pegados por la red
+            List<String> comandos = stringData.split("CMD::");
+            for (String cmd in comandos) {
+              if (cmd.isEmpty) continue;
+
+              if (cmd.startsWith("TYPING::")) {
+                String nombreAmigo = cmd.replaceAll("TYPING::", "");
+                _mostrarEscribiendo(nombreAmigo);
+                for (var c in _clientesConectados)
+                  if (c != cliente) c.write("CMD::TYPING::$nombreAmigo");
+              } else if (cmd.startsWith("JSON::")) {
+                try {
+                  var map = jsonDecode(cmd.substring(6));
+                  setState(() {
+                    _mensajes.add(
+                      MensajeChat(
+                        nombre: map['n'],
+                        texto: map['t'],
+                        soyYo: false,
+                        esSistema: false,
+                        hora: _obtenerHoraActual(),
+                      ),
+                    );
+                  });
+                  _guardarHistorial();
+                  _hacerScrollHaciaAbajo();
+                  // Rebotar a los demás clientes
+                  for (var c in _clientesConectados)
+                    if (c != cliente) c.write("CMD::JSON::${cmd.substring(6)}");
+                } catch (e) {}
               }
-              return;
-            }
-
-            setState(() {
-              _mensajes.add(
-                MensajeChat(
-                  texto: mensajeRecibido,
-                  soyYo: false,
-                  esSistema: false,
-                  hora: _obtenerHoraActual(),
-                ),
-              );
-            });
-            _guardarHistorial();
-            _hacerScrollHaciaAbajo();
-
-            for (var c in _clientesConectados) {
-              if (c != cliente) c.write(mensajeRecibido);
             }
           },
           onDone: () {
@@ -353,11 +381,11 @@ class _PantallaHostState extends State<PantallaHost> {
           ? "Host"
           : _nombreController.text;
       String textoPuro = _mensajeController.text;
-      String mensajeAEnviar = "$nombre: $textoPuro";
 
       setState(() {
         _mensajes.add(
           MensajeChat(
+            nombre: nombre,
             texto: textoPuro,
             soyYo: true,
             esSistema: false,
@@ -369,8 +397,10 @@ class _PantallaHostState extends State<PantallaHost> {
       _guardarHistorial();
       _hacerScrollHaciaAbajo();
 
+      String payload =
+          "CMD::JSON::${jsonEncode({'n': nombre, 't': textoPuro})}";
       for (var cliente in _clientesConectados) {
-        cliente.write(mensajeAEnviar);
+        cliente.write(payload);
       }
     }
   }
@@ -578,41 +608,61 @@ class _PantallaHostState extends State<PantallaHost> {
                               : const Radius.circular(12),
                         ),
                       ),
-                      child: Wrap(
-                        alignment: WrapAlignment.end,
-                        crossAxisAlignment: WrapCrossAlignment.end,
+                      child: Column(
+                        crossAxisAlignment: msg.soyYo
+                            ? CrossAxisAlignment.end
+                            : CrossAxisAlignment.start,
                         children: [
-                          Padding(
-                            padding: const EdgeInsets.only(
-                              right: 10,
-                              bottom: 2,
-                            ),
-                            child: Text(
-                              msg.texto,
-                              style: const TextStyle(
-                                fontSize: 16,
-                                color: Colors.white,
-                              ),
-                            ),
-                          ),
-                          Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                msg.hora,
+                          // AQUI ESTÁ EL NOMBRE COLOREADO
+                          if (!msg.soyYo && msg.nombre.isNotEmpty)
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 4),
+                              child: Text(
+                                msg.nombre,
                                 style: TextStyle(
-                                  fontSize: 11,
-                                  color: Colors.white.withOpacity(0.6),
+                                  color: _getColorPorNombre(msg.nombre),
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 13,
                                 ),
                               ),
-                              if (msg.soyYo) ...[
-                                const SizedBox(width: 4),
-                                const Icon(
-                                  Icons.done_all,
-                                  size: 16,
-                                  color: Colors.lightBlueAccent,
+                            ),
+                          Wrap(
+                            alignment: WrapAlignment.end,
+                            crossAxisAlignment: WrapCrossAlignment.end,
+                            children: [
+                              Padding(
+                                padding: const EdgeInsets.only(
+                                  right: 10,
+                                  bottom: 2,
                                 ),
-                              ],
+                                child: Text(
+                                  msg.texto,
+                                  style: const TextStyle(
+                                    fontSize: 16,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                              ),
+                              Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    msg.hora,
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: Colors.white.withOpacity(0.6),
+                                    ),
+                                  ),
+                                  if (msg.soyYo) ...[
+                                    const SizedBox(width: 4),
+                                    const Icon(
+                                      Icons.done_all,
+                                      size: 16,
+                                      color: Colors.lightBlueAccent,
+                                    ),
+                                  ],
+                                ],
+                              ),
                             ],
                           ),
                         ],
@@ -673,7 +723,7 @@ class _PantallaHostState extends State<PantallaHost> {
 }
 
 // ==========================================
-// PANTALLA DEL CLIENTE (LÓGICA SEPARADA - SOLUCIÓN DEL BUG)
+// PANTALLA DEL CLIENTE
 // ==========================================
 
 class PantallaCliente extends StatefulWidget {
@@ -686,15 +736,12 @@ class PantallaCliente extends StatefulWidget {
 class _PantallaClienteState extends State<PantallaCliente> {
   Socket? _socket;
   final TextEditingController _ipController = TextEditingController();
-  final TextEditingController _nombreController = TextEditingController(
-    text: "Fidel",
-  );
+  final TextEditingController _nombreController =
+      TextEditingController(); // Limpio por defecto
   final TextEditingController _mensajeController = TextEditingController();
 
   List<MensajeChat> _mensajes = [];
   bool _conectado = false;
-
-  // NUEVA VARIABLE MAGICA: Decide si vemos el Formulario o vemos el Chat
   bool _mostrarFormulario = true;
 
   final ScrollController _scrollController = ScrollController();
@@ -704,11 +751,15 @@ class _PantallaClienteState extends State<PantallaCliente> {
   @override
   void initState() {
     super.initState();
-    _cargarHistorial();
+    _cargarDatos();
   }
 
-  Future<void> _cargarHistorial() async {
+  Future<void> _cargarDatos() async {
     final prefs = await SharedPreferences.getInstance();
+
+    // Cargar su nombre personalizado
+    _nombreController.text = prefs.getString('mi_nombre_cliente') ?? "";
+
     final String? historialJson = prefs.getString('historial_cliente');
     if (historialJson != null) {
       final List<dynamic> decodificado = jsonDecode(historialJson);
@@ -717,7 +768,6 @@ class _PantallaClienteState extends State<PantallaCliente> {
           _mensajes = decodificado
               .map((item) => MensajeChat.fromJson(item))
               .toList();
-          // Si hay historial, ocultamos el formulario automáticamente y mostramos el chat
           _mostrarFormulario = false;
         });
         _hacerScrollHaciaAbajo();
@@ -727,6 +777,7 @@ class _PantallaClienteState extends State<PantallaCliente> {
 
   Future<void> _guardarHistorial() async {
     final prefs = await SharedPreferences.getInstance();
+    prefs.setString('mi_nombre_cliente', _nombreController.text);
     final String historialJson = jsonEncode(
       _mensajes.map((m) => m.toJson()).toList(),
     );
@@ -773,7 +824,7 @@ class _PantallaClienteState extends State<PantallaCliente> {
       if (!mounted) return;
       setState(() {
         _conectado = true;
-        _mostrarFormulario = false; // Te manda directo al chat
+        _mostrarFormulario = false;
         _mensajes.add(
           MensajeChat(
             texto: "Te uniste al grupo",
@@ -788,47 +839,73 @@ class _PantallaClienteState extends State<PantallaCliente> {
       _socket!.listen(
         (List<int> data) async {
           if (!mounted) return;
-          String mensajeRecibido = String.fromCharCodes(data);
+          String stringData = String.fromCharCodes(data);
 
-          // Si el host destruye la sala
-          if (mensajeRecibido == "CMD::CLOSE_ROOM") {
-            await _borrarHistorialSeguridad();
-            setState(() {
-              _mensajes.add(
-                MensajeChat(
-                  texto: "El Host destruyó la sala. Mensajes borrados.",
-                  soyYo: false,
-                  esSistema: true,
-                  hora: _obtenerHoraActual(),
+          List<String> comandos = stringData.split("CMD::");
+          for (String cmd in comandos) {
+            if (cmd.isEmpty) continue;
+
+            // 1. SOLUCIÓN AL BUG DE EXPULSIÓN
+            if (cmd == "CLOSE_ROOM") {
+              await _borrarHistorialSeguridad();
+              if (!mounted) return;
+              _socket?.destroy();
+
+              // Lanza el popup y expulsa al usuario a la pantalla principal
+              showDialog(
+                context: context,
+                barrierDismissible: false,
+                builder: (context) => AlertDialog(
+                  backgroundColor: fondoAppbar,
+                  title: const Text(
+                    'Sala Destruida',
+                    style: TextStyle(color: Colors.white),
+                  ),
+                  content: const Text(
+                    'El Host ha cerrado la sala. Todos los mensajes han sido borrados por seguridad.',
+                    style: TextStyle(color: Colors.white70),
+                  ),
+                  actions: [
+                    ElevatedButton(
+                      onPressed: () {
+                        Navigator.pop(context); // Cierra el popup
+                        Navigator.pop(
+                          context,
+                        ); // Cierra el chat y regresa al menú de inicio
+                      },
+                      child: const Text(
+                        'Entendido',
+                        style: TextStyle(color: fondoOscuro),
+                      ),
+                    ),
+                  ],
                 ),
               );
-            });
-            _socket?.destroy();
-            return;
-          }
+              return;
+            }
 
-          // Si alguien escribe
-          if (mensajeRecibido.startsWith("CMD::TYPING::")) {
-            String nombreAmigo = mensajeRecibido.replaceAll(
-              "CMD::TYPING::",
-              "",
-            );
-            _mostrarEscribiendo(nombreAmigo);
-            return;
+            if (cmd.startsWith("TYPING::")) {
+              String nombreAmigo = cmd.replaceAll("TYPING::", "");
+              _mostrarEscribiendo(nombreAmigo);
+            } else if (cmd.startsWith("JSON::")) {
+              try {
+                var map = jsonDecode(cmd.substring(6));
+                setState(() {
+                  _mensajes.add(
+                    MensajeChat(
+                      nombre: map['n'],
+                      texto: map['t'],
+                      soyYo: false,
+                      esSistema: false,
+                      hora: _obtenerHoraActual(),
+                    ),
+                  );
+                });
+                _guardarHistorial();
+                _hacerScrollHaciaAbajo();
+              } catch (e) {}
+            }
           }
-
-          setState(() {
-            _mensajes.add(
-              MensajeChat(
-                texto: mensajeRecibido,
-                soyYo: false,
-                esSistema: false,
-                hora: _obtenerHoraActual(),
-              ),
-            );
-          });
-          _guardarHistorial();
-          _hacerScrollHaciaAbajo();
         },
         onDone: () {
           if (!mounted) return;
@@ -859,8 +936,7 @@ class _PantallaClienteState extends State<PantallaCliente> {
             hora: _obtenerHoraActual(),
           ),
         );
-        _mostrarFormulario =
-            false; // Te mostramos el chat para que leas el error
+        _mostrarFormulario = true;
       });
     }
   }
@@ -871,13 +947,11 @@ class _PantallaClienteState extends State<PantallaCliente> {
           ? "Amigo"
           : _nombreController.text;
       String textoPuro = _mensajeController.text;
-      String mensajeAEnviar = "$nombre: $textoPuro";
-
-      _socket!.write(mensajeAEnviar);
 
       setState(() {
         _mensajes.add(
           MensajeChat(
+            nombre: nombre,
             texto: textoPuro,
             soyYo: true,
             esSistema: false,
@@ -888,6 +962,10 @@ class _PantallaClienteState extends State<PantallaCliente> {
       });
       _guardarHistorial();
       _hacerScrollHaciaAbajo();
+
+      String payload =
+          "CMD::JSON::${jsonEncode({'n': nombre, 't': textoPuro})}";
+      _socket!.write(payload);
     }
   }
 
@@ -954,7 +1032,7 @@ class _PantallaClienteState extends State<PantallaCliente> {
       body: Column(
         children: [
           // ===============================================
-          // PANTALLA 1: FORMULARIO (Totalmente separado)
+          // PANTALLA 1: FORMULARIO
           // ===============================================
           if (_mostrarFormulario && !_conectado)
             Expanded(
@@ -1023,7 +1101,6 @@ class _PantallaClienteState extends State<PantallaCliente> {
                             child: const Text('Conectar manual'),
                           ),
                         ),
-                        // Botón para salirte del formulario e ir al chat
                         if (_mensajes.isNotEmpty)
                           Padding(
                             padding: const EdgeInsets.only(top: 15),
@@ -1047,16 +1124,16 @@ class _PantallaClienteState extends State<PantallaCliente> {
               ),
             )
           // ===============================================
-          // PANTALLA 2: EL CHAT (Se oculta el form por completo)
+          // PANTALLA 2: EL CHAT
           // ===============================================
           else ...[
-            // Si estás viendo el chat pero NO estás conectado, mostramos un banner
+            // Banner superior si pierde conexión (SOLUCIÓN AL BUG DE SALIDA)
             if (!_conectado)
               Container(
                 color: Colors.redAccent.withOpacity(0.15),
                 padding: const EdgeInsets.symmetric(
                   horizontal: 16,
-                  vertical: 10,
+                  vertical: 8,
                 ),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -1078,20 +1155,32 @@ class _PantallaClienteState extends State<PantallaCliente> {
                         ),
                       ],
                     ),
-                    ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.redAccent,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 0,
+                    Row(
+                      children: [
+                        // BOTÓN PARA ESCAPAR SI SE BUGEA
+                        IconButton(
+                          icon: const Icon(
+                            Icons.exit_to_app,
+                            color: Colors.redAccent,
+                          ),
+                          tooltip: 'Salir',
+                          onPressed: () => Navigator.pop(context),
                         ),
-                        minimumSize: const Size(0, 36),
-                      ),
-                      onPressed: () => setState(
-                        () => _mostrarFormulario = true,
-                      ), // Te regresa al form
-                      child: const Text("Reconectar"),
+                        ElevatedButton(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.redAccent,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 0,
+                            ),
+                            minimumSize: const Size(0, 36),
+                          ),
+                          onPressed: () =>
+                              setState(() => _mostrarFormulario = true),
+                          child: const Text("Reconectar"),
+                        ),
+                      ],
                     ),
                   ],
                 ),
@@ -1171,41 +1260,61 @@ class _PantallaClienteState extends State<PantallaCliente> {
                                 : const Radius.circular(12),
                           ),
                         ),
-                        child: Wrap(
-                          alignment: WrapAlignment.end,
-                          crossAxisAlignment: WrapCrossAlignment.end,
+                        child: Column(
+                          crossAxisAlignment: msg.soyYo
+                              ? CrossAxisAlignment.end
+                              : CrossAxisAlignment.start,
                           children: [
-                            Padding(
-                              padding: const EdgeInsets.only(
-                                right: 10,
-                                bottom: 2,
-                              ),
-                              child: Text(
-                                msg.texto,
-                                style: const TextStyle(
-                                  fontSize: 16,
-                                  color: Colors.white,
-                                ),
-                              ),
-                            ),
-                            Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Text(
-                                  msg.hora,
+                            // AQUI ESTÁ EL NOMBRE COLOREADO
+                            if (!msg.soyYo && msg.nombre.isNotEmpty)
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 4),
+                                child: Text(
+                                  msg.nombre,
                                   style: TextStyle(
-                                    fontSize: 11,
-                                    color: Colors.white.withOpacity(0.6),
+                                    color: _getColorPorNombre(msg.nombre),
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 13,
                                   ),
                                 ),
-                                if (msg.soyYo) ...[
-                                  const SizedBox(width: 4),
-                                  const Icon(
-                                    Icons.done_all,
-                                    size: 16,
-                                    color: Colors.lightBlueAccent,
+                              ),
+                            Wrap(
+                              alignment: WrapAlignment.end,
+                              crossAxisAlignment: WrapCrossAlignment.end,
+                              children: [
+                                Padding(
+                                  padding: const EdgeInsets.only(
+                                    right: 10,
+                                    bottom: 2,
                                   ),
-                                ],
+                                  child: Text(
+                                    msg.texto,
+                                    style: const TextStyle(
+                                      fontSize: 16,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                ),
+                                Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Text(
+                                      msg.hora,
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        color: Colors.white.withOpacity(0.6),
+                                      ),
+                                    ),
+                                    if (msg.soyYo) ...[
+                                      const SizedBox(width: 4),
+                                      const Icon(
+                                        Icons.done_all,
+                                        size: 16,
+                                        color: Colors.lightBlueAccent,
+                                      ),
+                                    ],
+                                  ],
+                                ),
                               ],
                             ),
                           ],
@@ -1217,7 +1326,6 @@ class _PantallaClienteState extends State<PantallaCliente> {
               ),
             ),
 
-            // Barra de input (Se bloquea si estás desconectado)
             if (_conectado)
               Container(
                 padding: const EdgeInsets.all(8),
