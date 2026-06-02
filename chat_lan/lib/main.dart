@@ -1,6 +1,6 @@
 import 'dart:io';
 import 'dart:convert';
-import 'dart:async'; // Necesario para el timer de "Escribiendo..."
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
@@ -185,7 +185,6 @@ class _PantallaHostState extends State<PantallaHost> {
   );
   final ScrollController _scrollController = ScrollController();
 
-  // Variables para la función "Escribiendo..."
   String _quienEscribe = "";
   Timer? _typingTimer;
 
@@ -280,21 +279,18 @@ class _PantallaHostState extends State<PantallaHost> {
             if (!mounted) return;
             String mensajeRecibido = String.fromCharCodes(data);
 
-            // 1. Detección de "Escribiendo..."
             if (mensajeRecibido.startsWith("CMD::TYPING::")) {
               String nombreAmigo = mensajeRecibido.replaceAll(
                 "CMD::TYPING::",
                 "",
               );
               _mostrarEscribiendo(nombreAmigo);
-              // Rebotar el estado de escribiendo a los demás
               for (var c in _clientesConectados) {
                 if (c != cliente) c.write(mensajeRecibido);
               }
-              return; // No lo guardamos como mensaje normal
+              return;
             }
 
-            // 2. Mensaje normal
             setState(() {
               _mensajes.add(
                 MensajeChat(
@@ -318,7 +314,7 @@ class _PantallaHostState extends State<PantallaHost> {
               _clientesConectados.remove(cliente);
               _mensajes.add(
                 MensajeChat(
-                  texto: "Alguien se desconectó (El chat no se borra)",
+                  texto: "Alguien se desconectó",
                   soyYo: false,
                   esSistema: true,
                   hora: _obtenerHoraActual(),
@@ -335,7 +331,6 @@ class _PantallaHostState extends State<PantallaHost> {
     }
   }
 
-  // --- FUNCIÓN MANUAL PARA DESTRUIR LA SALA ---
   Future<void> _cerrarSalaYBorrar() async {
     for (var cliente in _clientesConectados) {
       try {
@@ -416,7 +411,6 @@ class _PantallaHostState extends State<PantallaHost> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Text('Grupo LAN (Host)', style: TextStyle(fontSize: 18)),
-                // Aquí aparece el "Escribiendo..." al estilo WhatsApp
                 if (_quienEscribe.isNotEmpty)
                   Text(
                     _quienEscribe,
@@ -641,8 +635,7 @@ class _PantallaHostState extends State<PantallaHost> {
                       ),
                       child: TextField(
                         controller: _mensajeController,
-                        onChanged:
-                            _notificarQueEscribo, // Dispara el evento al teclear
+                        onChanged: _notificarQueEscribo,
                         style: const TextStyle(color: Colors.white),
                         decoration: const InputDecoration(
                           hintText: 'Mensaje',
@@ -680,7 +673,7 @@ class _PantallaHostState extends State<PantallaHost> {
 }
 
 // ==========================================
-// PANTALLA DEL CLIENTE
+// PANTALLA DEL CLIENTE (LÓGICA SEPARADA - SOLUCIÓN DEL BUG)
 // ==========================================
 
 class PantallaCliente extends StatefulWidget {
@@ -700,8 +693,11 @@ class _PantallaClienteState extends State<PantallaCliente> {
 
   List<MensajeChat> _mensajes = [];
   bool _conectado = false;
-  final ScrollController _scrollController = ScrollController();
 
+  // NUEVA VARIABLE MAGICA: Decide si vemos el Formulario o vemos el Chat
+  bool _mostrarFormulario = true;
+
+  final ScrollController _scrollController = ScrollController();
   String _quienEscribe = "";
   Timer? _typingTimer;
 
@@ -716,12 +712,16 @@ class _PantallaClienteState extends State<PantallaCliente> {
     final String? historialJson = prefs.getString('historial_cliente');
     if (historialJson != null) {
       final List<dynamic> decodificado = jsonDecode(historialJson);
-      setState(() {
-        _mensajes = decodificado
-            .map((item) => MensajeChat.fromJson(item))
-            .toList();
-      });
-      _hacerScrollHaciaAbajo();
+      if (decodificado.isNotEmpty) {
+        setState(() {
+          _mensajes = decodificado
+              .map((item) => MensajeChat.fromJson(item))
+              .toList();
+          // Si hay historial, ocultamos el formulario automáticamente y mostramos el chat
+          _mostrarFormulario = false;
+        });
+        _hacerScrollHaciaAbajo();
+      }
     }
   }
 
@@ -773,6 +773,7 @@ class _PantallaClienteState extends State<PantallaCliente> {
       if (!mounted) return;
       setState(() {
         _conectado = true;
+        _mostrarFormulario = false; // Te manda directo al chat
         _mensajes.add(
           MensajeChat(
             texto: "Te uniste al grupo",
@@ -789,7 +790,7 @@ class _PantallaClienteState extends State<PantallaCliente> {
           if (!mounted) return;
           String mensajeRecibido = String.fromCharCodes(data);
 
-          // --- DETECCIÓN DEL CÓDIGO DE AUTODESTRUCCIÓN ---
+          // Si el host destruye la sala
           if (mensajeRecibido == "CMD::CLOSE_ROOM") {
             await _borrarHistorialSeguridad();
             setState(() {
@@ -806,7 +807,7 @@ class _PantallaClienteState extends State<PantallaCliente> {
             return;
           }
 
-          // --- DETECCIÓN DE "ESCRIBIENDO..." ---
+          // Si alguien escribe
           if (mensajeRecibido.startsWith("CMD::TYPING::")) {
             String nombreAmigo = mensajeRecibido.replaceAll(
               "CMD::TYPING::",
@@ -831,8 +832,8 @@ class _PantallaClienteState extends State<PantallaCliente> {
         },
         onDone: () {
           if (!mounted) return;
-          // YA NO BORRA EL HISTORIAL SI EL WIFI FALLA, SOLO AVISA
           setState(() {
+            _conectado = false;
             _mensajes.add(
               MensajeChat(
                 texto: "Se perdió la conexión, pero tu historial está a salvo.",
@@ -858,6 +859,8 @@ class _PantallaClienteState extends State<PantallaCliente> {
             hora: _obtenerHoraActual(),
           ),
         );
+        _mostrarFormulario =
+            false; // Te mostramos el chat para que leas el error
       });
     }
   }
@@ -950,7 +953,10 @@ class _PantallaClienteState extends State<PantallaCliente> {
       ),
       body: Column(
         children: [
-          if (!_conectado)
+          // ===============================================
+          // PANTALLA 1: FORMULARIO (Totalmente separado)
+          // ===============================================
+          if (_mostrarFormulario && !_conectado)
             Expanded(
               child: Center(
                 child: SingleChildScrollView(
@@ -1017,14 +1023,81 @@ class _PantallaClienteState extends State<PantallaCliente> {
                             child: const Text('Conectar manual'),
                           ),
                         ),
+                        // Botón para salirte del formulario e ir al chat
+                        if (_mensajes.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 15),
+                            child: TextButton.icon(
+                              onPressed: () =>
+                                  setState(() => _mostrarFormulario = false),
+                              icon: const Icon(
+                                Icons.history,
+                                color: colorAcento,
+                              ),
+                              label: const Text(
+                                'Ver historial (Desconectado)',
+                                style: TextStyle(color: colorAcento),
+                              ),
+                            ),
+                          ),
                       ],
                     ),
                   ),
                 ),
               ),
-            ),
+            )
+          // ===============================================
+          // PANTALLA 2: EL CHAT (Se oculta el form por completo)
+          // ===============================================
+          else ...[
+            // Si estás viendo el chat pero NO estás conectado, mostramos un banner
+            if (!_conectado)
+              Container(
+                color: Colors.redAccent.withOpacity(0.15),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 10,
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Row(
+                      children: [
+                        Icon(
+                          Icons.warning_amber_rounded,
+                          color: Colors.redAccent,
+                          size: 20,
+                        ),
+                        SizedBox(width: 8),
+                        Text(
+                          "Sin conexión",
+                          style: TextStyle(
+                            color: Colors.redAccent,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                    ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.redAccent,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 0,
+                        ),
+                        minimumSize: const Size(0, 36),
+                      ),
+                      onPressed: () => setState(
+                        () => _mostrarFormulario = true,
+                      ), // Te regresa al form
+                      child: const Text("Reconectar"),
+                    ),
+                  ],
+                ),
+              ),
 
-          if (_conectado || _mensajes.isNotEmpty) ...[
+            // Lista de Mensajes
             Expanded(
               child: Container(
                 decoration: BoxDecoration(
@@ -1144,6 +1217,7 @@ class _PantallaClienteState extends State<PantallaCliente> {
               ),
             ),
 
+            // Barra de input (Se bloquea si estás desconectado)
             if (_conectado)
               Container(
                 padding: const EdgeInsets.all(8),
@@ -1158,8 +1232,7 @@ class _PantallaClienteState extends State<PantallaCliente> {
                         ),
                         child: TextField(
                           controller: _mensajeController,
-                          onChanged:
-                              _notificarQueEscribo, // Detecta cuando escribes
+                          onChanged: _notificarQueEscribo,
                           style: const TextStyle(color: Colors.white),
                           decoration: const InputDecoration(
                             hintText: 'Mensaje',
@@ -1187,6 +1260,16 @@ class _PantallaClienteState extends State<PantallaCliente> {
                       ),
                     ),
                   ],
+                ),
+              )
+            else
+              Container(
+                padding: const EdgeInsets.all(16),
+                color: fondoOscuro,
+                alignment: Alignment.center,
+                child: const Text(
+                  "Conéctate a una sala para enviar mensajes.",
+                  style: TextStyle(color: Colors.white54),
                 ),
               ),
           ],
