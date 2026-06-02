@@ -7,7 +7,7 @@ void main() {
   runApp(const ChatLanApp());
 }
 
-// Paleta de colores estilo Discord / Premium
+// Paleta de colores Premium
 const Color fondoOscuro = Color(0xFF36393F);
 const Color fondoPaneles = Color(0xFF2F3136);
 const Color colorPrimario = Color(0xFF5865F2);
@@ -52,7 +52,32 @@ class ChatLanApp extends StatelessWidget {
 }
 
 // ==========================================
-// PANTALLA DE INICIO (MENÚ PRINCIPAL)
+// ESTRUCTURA DEL MENSAJE (Para guardar la hora)
+// ==========================================
+class MensajeChat {
+  final String texto;
+  final bool soyYo;
+  final bool esSistema;
+  final String hora;
+
+  MensajeChat({
+    required this.texto,
+    required this.soyYo,
+    required this.esSistema,
+    required this.hora,
+  });
+}
+
+// Obtener la hora actual en formato HH:MM
+String _obtenerHoraActual() {
+  final ahora = DateTime.now();
+  final hora = ahora.hour.toString().padLeft(2, '0');
+  final minuto = ahora.minute.toString().padLeft(2, '0');
+  return "$hora:$minuto";
+}
+
+// ==========================================
+// PANTALLA DE INICIO
 // ==========================================
 
 class PantallaInicio extends StatelessWidget {
@@ -68,7 +93,6 @@ class PantallaInicio extends StatelessWidget {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              // Ícono de chat amigable (Cero IAs)
               Container(
                 padding: const EdgeInsets.all(24),
                 decoration: BoxDecoration(
@@ -101,14 +125,12 @@ class PantallaInicio extends StatelessWidget {
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton.icon(
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => const PantallaHost(),
-                      ),
-                    );
-                  },
+                  onPressed: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const PantallaHost(),
+                    ),
+                  ),
                   icon: const Icon(Icons.wifi_tethering, size: 28),
                   label: const Text(
                     'Abrir Sala (Invitar)',
@@ -120,14 +142,12 @@ class PantallaInicio extends StatelessWidget {
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton.icon(
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => const PantallaCliente(),
-                      ),
-                    );
-                  },
+                  onPressed: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const PantallaCliente(),
+                    ),
+                  ),
                   icon: const Icon(Icons.login, size: 28),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: fondoPaneles,
@@ -161,8 +181,18 @@ class PantallaHost extends StatefulWidget {
 class _PantallaHostState extends State<PantallaHost> {
   ServerSocket? _serverSocket;
   String _ipLocal = "";
-  List<String> _mensajes = [];
   List<Socket> _clientesConectados = [];
+
+  // Lista actualizada a nuestro nuevo formato
+  List<MensajeChat> _mensajes = [];
+
+  final TextEditingController _mensajeController = TextEditingController();
+  final TextEditingController _nombreController = TextEditingController(
+    text: "Host",
+  );
+
+  // Controlador para el Auto-Scroll
+  final ScrollController _scrollController = ScrollController();
 
   @override
   void initState() {
@@ -170,11 +200,24 @@ class _PantallaHostState extends State<PantallaHost> {
     _iniciarServidor();
   }
 
+  void _hacerScrollHaciaAbajo() {
+    Future.delayed(const Duration(milliseconds: 100), () {
+      if (_scrollController.hasClients) {
+        _scrollController.animateTo(
+          _scrollController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+        );
+      }
+    });
+  }
+
   Future<void> _iniciarServidor() async {
     try {
       for (var interface in await NetworkInterface.list()) {
         for (var addr in interface.addresses) {
           if (addr.type == InternetAddressType.IPv4 && !addr.isLoopback) {
+            if (!mounted) return;
             setState(() {
               _ipLocal = addr.address;
             });
@@ -186,133 +229,270 @@ class _PantallaHostState extends State<PantallaHost> {
       _serverSocket = await ServerSocket.bind(InternetAddress.anyIPv4, 8080);
 
       _serverSocket!.listen((Socket cliente) {
+        if (!mounted) return;
         setState(() {
           _clientesConectados.add(cliente);
-          _mensajes.add("👋 Alguien acaba de entrar a la sala");
+          _mensajes.add(
+            MensajeChat(
+              texto: "👋 Alguien acaba de entrar a la sala",
+              soyYo: false,
+              esSistema: true,
+              hora: _obtenerHoraActual(),
+            ),
+          );
         });
+        _hacerScrollHaciaAbajo();
 
         cliente.listen(
           (List<int> data) {
+            if (!mounted) return;
             String mensajeRecibido = String.fromCharCodes(data);
             setState(() {
-              _mensajes.add(mensajeRecibido);
+              _mensajes.add(
+                MensajeChat(
+                  texto: mensajeRecibido,
+                  soyYo: false,
+                  esSistema: false,
+                  hora: _obtenerHoraActual(),
+                ),
+              );
             });
+            _hacerScrollHaciaAbajo();
 
             for (var c in _clientesConectados) {
-              if (c != cliente) {
-                c.write(mensajeRecibido);
-              }
+              if (c != cliente) c.write(mensajeRecibido);
             }
           },
           onDone: () {
+            if (!mounted) return;
             setState(() {
               _clientesConectados.remove(cliente);
-              _mensajes.add("🚪 Alguien salió de la sala.");
+              _mensajes.add(
+                MensajeChat(
+                  texto: "🚪 Alguien salió de la sala.",
+                  soyYo: false,
+                  esSistema: true,
+                  hora: _obtenerHoraActual(),
+                ),
+              );
             });
+            _hacerScrollHaciaAbajo();
           },
         );
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() {
-        _mensajes.add("Error: $e");
+        _mensajes.add(
+          MensajeChat(
+            texto: "Error: $e",
+            soyYo: false,
+            esSistema: true,
+            hora: _obtenerHoraActual(),
+          ),
+        );
       });
+    }
+  }
+
+  void _enviarMensaje() {
+    if (_mensajeController.text.isNotEmpty) {
+      String nombre = _nombreController.text.isEmpty
+          ? "Host"
+          : _nombreController.text;
+      String textoPuro = _mensajeController.text;
+      String mensajeAEnviar = "$nombre: $textoPuro";
+
+      setState(() {
+        _mensajes.add(
+          MensajeChat(
+            texto: textoPuro,
+            soyYo: true,
+            esSistema: false,
+            hora: _obtenerHoraActual(),
+          ),
+        );
+        _mensajeController.clear();
+      });
+      _hacerScrollHaciaAbajo();
+
+      for (var cliente in _clientesConectados) {
+        cliente.write(mensajeAEnviar);
+      }
     }
   }
 
   @override
   void dispose() {
     _serverSocket?.close();
-    for (var cliente in _clientesConectados) {
-      cliente.close();
-    }
+    for (var cliente in _clientesConectados) cliente.close();
+    _scrollController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Sala de Espera')),
+      appBar: AppBar(title: const Text('Sala Principal (Host)')),
       body: Column(
         children: [
-          Container(
-            margin: const EdgeInsets.all(16),
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              color: fondoPaneles,
-              borderRadius: BorderRadius.circular(20),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.2),
-                  blurRadius: 10,
-                  offset: const Offset(0, 5),
+          Theme(
+            data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+            child: ExpansionTile(
+              backgroundColor: fondoPaneles,
+              collapsedBackgroundColor: fondoPaneles,
+              iconColor: Colors.white,
+              collapsedIconColor: Colors.white,
+              title: const Text(
+                'Ver Código QR de Invitación',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
                 ),
-              ],
-            ),
-            child: Column(
+              ),
+              leading: const Icon(Icons.qr_code, color: colorPrimario),
               children: [
-                const Text(
-                  'Que tus amigos escaneen este código:',
-                  style: TextStyle(fontSize: 16, color: Colors.white70),
-                ),
-                const SizedBox(height: 20),
-                if (_ipLocal.isNotEmpty)
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: QrImageView(
-                      data: _ipLocal,
-                      version: QrVersions.auto,
-                      size: 160.0,
-                    ),
-                  )
-                else
-                  const CircularProgressIndicator(color: colorPrimario),
-                const SizedBox(height: 20),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    const Icon(Icons.wifi, color: Colors.greenAccent, size: 20),
-                    const SizedBox(width: 8),
-                    Text(
-                      'IP: $_ipLocal : 8080',
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.greenAccent,
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 20),
+                  child: Column(
+                    children: [
+                      if (_ipLocal.isNotEmpty)
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          child: QrImageView(
+                            data: _ipLocal,
+                            version: QrVersions.auto,
+                            size: 150.0,
+                          ),
+                        )
+                      else
+                        const CircularProgressIndicator(color: colorPrimario),
+                      const SizedBox(height: 15),
+                      Text(
+                        'IP manual: $_ipLocal',
+                        style: const TextStyle(color: Colors.white70),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ],
             ),
           ),
 
           Expanded(
-            child: Container(
-              margin: const EdgeInsets.symmetric(horizontal: 16),
-              decoration: const BoxDecoration(
-                color: fondoPaneles,
-                borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-              ),
-              child: ListView.builder(
-                padding: const EdgeInsets.all(16),
-                itemCount: _mensajes.length,
-                itemBuilder: (context, index) {
-                  return Padding(
-                    padding: const EdgeInsets.only(bottom: 8.0),
-                    child: Text(
-                      _mensajes[index],
-                      style: const TextStyle(
-                        fontSize: 15,
-                        color: Colors.white70,
+            child: ListView.builder(
+              controller: _scrollController,
+              padding: const EdgeInsets.all(16),
+              itemCount: _mensajes.length,
+              itemBuilder: (context, index) {
+                final msg = _mensajes[index];
+
+                if (msg.esSistema) {
+                  return Center(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      child: Text(
+                        msg.texto,
+                        style: const TextStyle(
+                          color: Colors.white54,
+                          fontSize: 13,
+                          fontStyle: FontStyle.italic,
+                        ),
                       ),
                     ),
                   );
-                },
-              ),
+                }
+
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 12),
+                  alignment: msg.soyYo
+                      ? Alignment.centerRight
+                      : Alignment.centerLeft,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 10,
+                    ),
+                    decoration: BoxDecoration(
+                      color: msg.soyYo ? colorPrimario : fondoPaneles,
+                      borderRadius: BorderRadius.only(
+                        topLeft: const Radius.circular(20),
+                        topRight: const Radius.circular(20),
+                        bottomLeft: msg.soyYo
+                            ? const Radius.circular(20)
+                            : Radius.zero,
+                        bottomRight: msg.soyYo
+                            ? Radius.zero
+                            : const Radius.circular(20),
+                      ),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: msg.soyYo
+                          ? CrossAxisAlignment.end
+                          : CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          msg.texto,
+                          style: const TextStyle(
+                            fontSize: 16,
+                            color: Colors.white,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          msg.hora,
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: Colors.white.withOpacity(0.6),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+
+          Container(
+            padding: const EdgeInsets.all(16),
+            color: fondoPaneles,
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _mensajeController,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: InputDecoration(
+                      filled: true,
+                      fillColor: fondoInput,
+                      hintText: 'Host, envía un mensaje...',
+                      hintStyle: const TextStyle(color: Colors.white54),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(30),
+                        borderSide: BorderSide.none,
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 20,
+                        vertical: 14,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                CircleAvatar(
+                  radius: 25,
+                  backgroundColor: colorPrimario,
+                  child: IconButton(
+                    icon: const Icon(Icons.send_rounded, color: Colors.white),
+                    onPressed: _enviarMensaje,
+                  ),
+                ),
+              ],
             ),
           ),
         ],
@@ -338,34 +518,81 @@ class _PantallaClienteState extends State<PantallaCliente> {
   final TextEditingController _nombreController = TextEditingController();
   final TextEditingController _mensajeController = TextEditingController();
 
-  List<String> _mensajes = [];
+  List<MensajeChat> _mensajes = [];
   bool _conectado = false;
+  final ScrollController _scrollController = ScrollController();
+
+  void _hacerScrollHaciaAbajo() {
+    Future.delayed(const Duration(milliseconds: 100), () {
+      if (_scrollController.hasClients) {
+        _scrollController.animateTo(
+          _scrollController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+        );
+      }
+    });
+  }
 
   void _conectarAlHost() async {
     try {
       _socket = await Socket.connect(_ipController.text, 8080);
+      if (!mounted) return;
       setState(() {
         _conectado = true;
-        _mensajes.add("✅ Ya estás adentro del chat.");
+        _mensajes.add(
+          MensajeChat(
+            texto: "✅ Ya estás adentro del chat.",
+            soyYo: false,
+            esSistema: true,
+            hora: _obtenerHoraActual(),
+          ),
+        );
       });
 
       _socket!.listen(
         (List<int> data) {
+          if (!mounted) return;
           setState(() {
-            _mensajes.add(String.fromCharCodes(data));
+            _mensajes.add(
+              MensajeChat(
+                texto: String.fromCharCodes(data),
+                soyYo: false,
+                esSistema: false,
+                hora: _obtenerHoraActual(),
+              ),
+            );
           });
+          _hacerScrollHaciaAbajo();
         },
         onDone: () {
+          if (!mounted) return;
           setState(() {
             _conectado = false;
-            _mensajes.add("❌ Se cortó la conexión.");
+            _mensajes.add(
+              MensajeChat(
+                texto: "❌ Se cortó la conexión.",
+                soyYo: false,
+                esSistema: true,
+                hora: _obtenerHoraActual(),
+              ),
+            );
           });
           _socket?.destroy();
+          _hacerScrollHaciaAbajo();
         },
       );
     } catch (e) {
+      if (!mounted) return;
       setState(() {
-        _mensajes.add("No se pudo conectar. Revisa el código o la IP.");
+        _mensajes.add(
+          MensajeChat(
+            texto: "No se pudo conectar. Revisa el código o la IP.",
+            soyYo: false,
+            esSistema: true,
+            hora: _obtenerHoraActual(),
+          ),
+        );
       });
     }
   }
@@ -375,14 +602,23 @@ class _PantallaClienteState extends State<PantallaCliente> {
       String nombre = _nombreController.text.isEmpty
           ? "Amigo"
           : _nombreController.text;
-      String mensaje = "$nombre: ${_mensajeController.text}";
+      String textoPuro = _mensajeController.text;
+      String mensajeAEnviar = "$nombre: $textoPuro";
 
-      _socket!.write(mensaje);
+      _socket!.write(mensajeAEnviar);
 
       setState(() {
-        _mensajes.add("Tú: ${_mensajeController.text}");
+        _mensajes.add(
+          MensajeChat(
+            texto: textoPuro,
+            soyYo: true,
+            esSistema: false,
+            hora: _obtenerHoraActual(),
+          ),
+        );
         _mensajeController.clear();
       });
+      _hacerScrollHaciaAbajo();
     }
   }
 
@@ -403,6 +639,7 @@ class _PantallaClienteState extends State<PantallaCliente> {
   @override
   void dispose() {
     _socket?.close();
+    _scrollController.dispose();
     super.dispose();
   }
 
@@ -501,20 +738,18 @@ class _PantallaClienteState extends State<PantallaCliente> {
           if (_conectado) ...[
             Expanded(
               child: ListView.builder(
+                controller: _scrollController,
                 padding: const EdgeInsets.all(16),
                 itemCount: _mensajes.length,
                 itemBuilder: (context, index) {
-                  bool soyYo = _mensajes[index].startsWith("Tú:");
-                  bool esSistema =
-                      _mensajes[index].startsWith("✅") ||
-                      _mensajes[index].startsWith("❌");
+                  final msg = _mensajes[index];
 
-                  if (esSistema) {
+                  if (msg.esSistema) {
                     return Center(
                       child: Padding(
                         padding: const EdgeInsets.symmetric(vertical: 10),
                         child: Text(
-                          _mensajes[index],
+                          msg.texto,
                           style: const TextStyle(
                             color: Colors.white54,
                             fontSize: 13,
@@ -527,33 +762,48 @@ class _PantallaClienteState extends State<PantallaCliente> {
 
                   return Container(
                     margin: const EdgeInsets.only(bottom: 12),
-                    alignment: soyYo
+                    alignment: msg.soyYo
                         ? Alignment.centerRight
                         : Alignment.centerLeft,
                     child: Container(
                       padding: const EdgeInsets.symmetric(
                         horizontal: 16,
-                        vertical: 12,
+                        vertical: 10,
                       ),
                       decoration: BoxDecoration(
-                        color: soyYo ? colorPrimario : fondoPaneles,
+                        color: msg.soyYo ? colorPrimario : fondoPaneles,
                         borderRadius: BorderRadius.only(
                           topLeft: const Radius.circular(20),
                           topRight: const Radius.circular(20),
-                          bottomLeft: soyYo
+                          bottomLeft: msg.soyYo
                               ? const Radius.circular(20)
                               : Radius.zero,
-                          bottomRight: soyYo
+                          bottomRight: msg.soyYo
                               ? Radius.zero
                               : const Radius.circular(20),
                         ),
                       ),
-                      child: Text(
-                        _mensajes[index],
-                        style: const TextStyle(
-                          fontSize: 16,
-                          color: Colors.white,
-                        ),
+                      child: Column(
+                        crossAxisAlignment: msg.soyYo
+                            ? CrossAxisAlignment.end
+                            : CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            msg.texto,
+                            style: const TextStyle(
+                              fontSize: 16,
+                              color: Colors.white,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            msg.hora,
+                            style: TextStyle(
+                              fontSize: 10,
+                              color: Colors.white.withOpacity(0.6),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   );
